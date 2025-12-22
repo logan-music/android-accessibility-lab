@@ -5,127 +5,137 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ResultReceiver
+import android.os.Parcelable
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
 
-/**
- * MainActivity for Cyber Accessibility Agent
- *
- * - Registers MethodChannel 'accessibility_bridge'
- * - Forwards executeCommand calls to AccessibilityService via broadcast Intent
- * - Waits for ResultReceiver callback and returns result to Flutter
- * - Adds a timeout to avoid hanging if service doesn't respond
- *
- * Note: AccessibilityService should register a BroadcastReceiver listening
- *       for AccessibilityBridgeService.ACTION_EXECUTE and return results
- *       via the provided ResultReceiver (see AccessibilityBridgeService pseudo-code).
- */
-class MainActivity: FlutterActivity() {
-
+class MainActivity : FlutterActivity() {
     private val CHANNEL = "accessibility_bridge"
     private val RESPONSE_TIMEOUT_MS = 10_000L // 10 seconds
+    private val TAG = "MainActivity"
+
+    private var methodChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "executeCommand" -> {
-                    // validate args
-                    val args = call.arguments as? Map<*, *>
-                    if (args == null) {
-                        result.error("INVALID_ARGS", "Arguments missing or invalid", null)
-                        return@setMethodCallHandler
-                    }
-
-                    val cmdId = args["id"]?.toString() ?: ""
-                    val action = args["action"]?.toString() ?: ""
-                    val payloadMap = args["payload"] as? Map<*, *> ?: emptyMap<String, Any>()
-
-                    // prepare JSON payload string
-                    val payloadJson = try {
-                        JSONObject(payloadMap as Map<*, *>).toString()
-                    } catch (e: Exception) {
-                        JSONObject().toString()
-                    }
-
-                    // Handler & timeout runnable
-                    val mainHandler = Handler(Looper.getMainLooper())
-                    val timeoutRunnable = Runnable {
-                        // Timeout fired — return failure to Flutter
-                        try {
-                            result.success(mapOf("success" to false, "error" to "timeout"))
-                        } catch (_: Exception) { /* ignore */ }
-                    }
-                    mainHandler.postDelayed(timeoutRunnable, RESPONSE_TIMEOUT_MS)
-
-                    // ResultReceiver that will be passed to the AccessibilityService
-                    val rr = object : ResultReceiver(Handler(Looper.getMainLooper())) {
-                        override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
-                            // Cancel timeout
-                            mainHandler.removeCallbacks(timeoutRunnable)
-
-                            val payloadStr = resultData?.getString("result")
-                            if (payloadStr == null) {
-                                // no payload string: return simple success boolean
-                                try {
-                                    result.success(mapOf("success" to (resultCode == 0)))
-                                } catch (_: Exception) { /* ignore */ }
-                                return
-                            }
-
-                            // Try to parse JSON payload returned by the service
-                            try {
-                                val jo = JSONObject(payloadStr)
-                                // Convert JSONObject to Map<String, Any>
-                                val map = mutableMapOf<String, Any?>()
-                                val it = jo.keys()
-                                while (it.hasNext()) {
-                                    val k = it.next()
-                                    map[k] = jo.opt(k)
-                                }
-                                // include resultCode for debugging
-                                map["__result_code"] = resultCode
-                                try {
-                                    result.success(map)
-                                } catch (_: Exception) { /* ignore */ }
-                            } catch (e: Exception) {
-                                // not JSON — return raw string
-                                try {
-                                    result.success(mapOf("success" to (resultCode == 0), "result" to payloadStr))
-                                } catch (_: Exception) { /* ignore */ }
-                            }
-                        }
-                    }
-
-                    // Create broadcast intent for the AccessibilityService to pick up
-                    val intent = Intent(AccessibilityBridgeService.ACTION_EXECUTE).apply {
-                        putExtra(AccessibilityBridgeService.EXTRA_CMD_ID, cmdId)
-                        putExtra(AccessibilityBridgeService.EXTRA_ACTION, action)
-                        putExtra(AccessibilityBridgeService.EXTRA_PAYLOAD, payloadJson)
-                        putExtra(AccessibilityBridgeService.EXTRA_RESULT_RECEIVER, rr)
-                    }
-
-                    // send broadcast (non-blocking) — service should invoke ResultReceiver when done
-                    try {
-                        sendBroadcast(intent)
-                    } catch (e: Exception) {
-                        // If broadcast fails, cancel timeout and return error
-                        mainHandler.removeCallbacks(timeoutRunnable)
-                        result.error("BROADCAST_FAILED", e.message, null)
-                    }
-                }
-                else -> {
-                    result.notImplemented()
+        // keep a reference so we can clear handler on destroy if needed
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "executeCommand" -> handleExecuteCommand(call.arguments, result)
+                    else -> result.notImplemented()
                 }
             }
         }
     }
 
+    private fun handleExecuteCommand(arguments: Any?, result: MethodChannel.Result) {
+        // Validate args as a Map
+        val argsMap = when (arguments) {
+            is Map<*, *> -> arguments
+            else -> {
+                result.error("INVALID_ARGS", "Arguments missing or invalid", null)
+                return
+            }
+        }
+
+        val cmdId = argsMap["id"]?.toString() ?: ""
+        val action = argsMap["action"]?.toString() ?: ""
+        val payloadMap = argsMap["payload"] as? Map<*, *> ?: emptyMap<String, Any>()
+
+        // Prepare JSON payload string
+        val payloadJson = try {
+            JSONObject(payloadMap as Map<*, *>).toString()
+        } catch (e: Exception) {
+            "{}"
+        }
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        var timedOut = false
+        val timeoutRunnable = Runnable {
+            timedOut = true
+            try {
+                result.success(mapOf("success" to false, "error" to "timeout"))
+            } catch (_: Exception) { /* ignore */ }
+        }
+
+        mainHandler.postDelayed(timeoutRunnable, RESPONSE_TIMEOUT_MS)
+
+        // ResultReceiver for the service to call back
+        val rr = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+            override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                // Ensure timeout callback won't fire or will be ignored
+                mainHandler.removeCallbacks(timeoutRunnable)
+
+                if (timedOut) {
+                    // Already timed out; ignore late responses
+                    Log.w(TAG, "Accessibility service response arrived after timeout; ignoring.")
+                    return
+                }
+
+                try {
+                    val payloadStr = resultData?.getString("result")
+                    if (payloadStr == null) {
+                        // No payload string: return boolean success by resultCode convention
+                        result.success(mapOf("success" to (resultCode == 0)))
+                        return
+                    }
+
+                    // Try parse JSON
+                    try {
+                        val jo = JSONObject(payloadStr)
+                        val map = mutableMapOf<String, Any?>()
+                        val it = jo.keys()
+                        while (it.hasNext()) {
+                            val k = it.next()
+                            map[k] = jo.opt(k)
+                        }
+                        map["__result_code"] = resultCode
+                        result.success(map)
+                    } catch (e: Exception) {
+                        // Not JSON — return raw string
+                        result.success(mapOf("success" to (resultCode == 0), "result" to payloadStr))
+                    }
+                } catch (e: Exception) {
+                    try {
+                        result.error("SERVICE_ERROR", e.message, null)
+                    } catch (_: Exception) { /* ignore */ }
+                }
+            }
+        }
+
+        // Build broadcast Intent for the Accessibility Service
+        val intent = Intent(AccessibilityBridgeService.ACTION_EXECUTE).apply {
+            putExtra(AccessibilityBridgeService.EXTRA_CMD_ID, cmdId)
+            putExtra(AccessibilityBridgeService.EXTRA_ACTION, action)
+            putExtra(AccessibilityBridgeService.EXTRA_PAYLOAD, payloadJson)
+            putExtra(AccessibilityBridgeService.EXTRA_RESULT_RECEIVER, rr as Parcelable)
+        }
+
+        // Send broadcast (non-blocking)
+        try {
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            mainHandler.removeCallbacks(timeoutRunnable)
+            try {
+                result.error("BROADCAST_FAILED", e.message, null)
+            } catch (_: Exception) { /* ignore */ }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Clean up channel to avoid memory leaks
+        methodChannel?.setMethodCallHandler(null)
+        methodChannel = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // No UI here; consent UI handled in Flutter
+        // No UI here; Flutter UI handles consent/workflow
     }
 }
