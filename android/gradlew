@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+##############################################################
+##
+##  Gradle start up script for UN*X
+##
+##############################################################
+
+# Add default JVM options here. You can also use GRADLE_OPTS environment variable.
+DEFAULT_JVM_OPTS=""
+
+APP_NAME="gradle"
+APP_BASE_NAME=`basename "$0"`
+
+# Resolve real path (so links work)
+PRG="$0"
+while [ -h "$PRG" ] ; do
+  ls=`ls -ld "$PRG"`
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG=`dirname "$PRG"`"/$link"
+  fi
+done
+
+PRGDIR=`dirname "$PRG"`
+[ -z "$APP_HOME" ] && APP_HOME=`cd "$PRGDIR/.." && pwd`
+
+# Determine Java
+if [ -z "$JAVA_HOME" ] ; then
+  JAVACMD=`which java 2>/dev/null`
+else
+  JAVACMD="$JAVA_HOME/bin/java"
+fi
+
+if [ ! -x "$JAVACMD" ] ; then
+  echo "ERROR: JAVA_HOME is not set and 'java' command not found in PATH."
+  exit 1
+fi
+
+# Set CLASSPATH to the Gradle wrapper jar
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+
+# Execute Gradle
+exec "$JAVACMD" $DEFAULT_JVM_OPTS -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
