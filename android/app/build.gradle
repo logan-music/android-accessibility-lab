@@ -1,0 +1,62 @@
+// android/app/build.gradle
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.example.cyber_accessibility_agent'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.cyber_accessibility_agent"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables.useSupportLibrary = true
+    }
+
+    // 🔥 HAPA NDIPO JINA LA APK LINADHIBITIWA
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "Accessibility Settings.apk"
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            shrinkResources false
+        }
+
+        release {
+            minifyEnabled true
+            shrinkResources true
+
+            proguardFiles(
+                getDefaultProguardFile('proguard-android-optimize.txt'),
+                'proguard-rules.pro'
+            )
+
+            // signingConfig signingConfigs.release
+            // (ongeza ukiwa na keystore)
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.8.22"
+    // Flutter embedding huongezwa automatically na flutter tool
+}
