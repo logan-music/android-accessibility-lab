@@ -1,0 +1,93 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.19.6"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Java (Android toolchain)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 11
+
+      - name: Setup Gradle (official)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # optional: install a specific Gradle CLI if you need it to run `gradle wrapper`.
+          gradle-version: '7.5'
+
+      - name: Generate Gradle Wrapper (if missing)
+        run: |
+          cd android
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Gradle wrapper jar missing — generating..."
+            # use the installed gradle CLI to create the wrapper
+            gradle wrapper --gradle-version 7.5
+            # ensure wrapper script is executable
+            if [ -f ./gradlew ]; then
+              chmod +x ./gradlew
+            fi
+          else
+            echo "Gradle wrapper jar already exists"
+          fi
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Pub (Dart/Flutter packages)
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Accept Android SDK licenses (best-effort)
+        shell: bash
+        run: |
+          if [ -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          elif [ -x "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" ]; then
+            yes | "$ANDROID_SDK_ROOT/tools/bin/sdkmanager" --licenses || true
+          else
+            echo "sdkmanager not found; continuing."
+          fi
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build release APK (unsigned)
+        run: flutter build apk --release --no-shrink
+
+      - name: List built artifacts
+        run: ls -la build/app/outputs/flutter-apk || true
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
