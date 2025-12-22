@@ -19,39 +19,12 @@ jobs:
       - name: Setup Java (Android toolchain)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: 11
 
-      - name: Setup Gradle (official)
+      # ✅ Official Gradle setup (NO wrapper generation)
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          # optional: install a specific Gradle CLI if you need it to run `gradle wrapper`.
-          gradle-version: '7.5'
-
-      - name: Generate Gradle Wrapper (if missing)
-        run: |
-          cd android
-          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-            echo "Gradle wrapper jar missing — generating..."
-            # use the installed gradle CLI to create the wrapper
-            gradle wrapper --gradle-version 7.5
-            # ensure wrapper script is executable
-            if [ -f ./gradlew ]; then
-              chmod +x ./gradlew
-            fi
-          else
-            echo "Gradle wrapper jar already exists"
-          fi
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
 
       - name: Cache Pub (Dart/Flutter packages)
         uses: actions/cache@v4
