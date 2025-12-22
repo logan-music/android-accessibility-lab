@@ -21,6 +21,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CyberAccessibilityAgent">
 
+        <!-- 🔥 REQUIRED: tell Flutter this project uses Android embedding v2 -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
         <!-- Main Activity (Flutter) -->
         <activity
             android:name=".MainActivity"
