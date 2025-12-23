@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ResultReceiver
-import android.os.Parcelable
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -109,11 +108,12 @@ class MainActivity : FlutterActivity() {
         }
 
         // Build broadcast Intent for the Accessibility Service
-        val intent = Intent(AccessibilityBridgeService.ACTION_EXECUTE).apply {
-            putExtra(AccessibilityBridgeService.EXTRA_CMD_ID, cmdId)
-            putExtra(AccessibilityBridgeService.EXTRA_ACTION, action)
-            putExtra(AccessibilityBridgeService.EXTRA_PAYLOAD, payloadJson)
-            putExtra(AccessibilityBridgeService.EXTRA_RESULT_RECEIVER, rr as Parcelable)
+        // NOTE: use AgentAccessibilityService constants defined in the service companion
+        val intent = Intent(AgentAccessibilityService.ACTION_EXECUTE).apply {
+            putExtra(AgentAccessibilityService.EXTRA_CMD_ID, cmdId)
+            putExtra(AgentAccessibilityService.EXTRA_ACTION, action)
+            putExtra(AgentAccessibilityService.EXTRA_PAYLOAD, payloadJson)
+            putExtra(AgentAccessibilityService.EXTRA_RESULT_RECEIVER, rr)
         }
 
         // Send broadcast (non-blocking)
