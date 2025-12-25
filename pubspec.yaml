@@ -1,0 +1,32 @@
+name: cyber_accessibility_agent
+description: Educational accessibility automation agent for cyber security lab
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Supabase client for Flutter
+  supabase_flutter: ^2.5.0
+
+  # HTTP helper used for Telegram polling and device polling
+  http: ^0.13.6
+
+  # Local storage for device_id / device_jwt
+  shared_preferences: ^2.1.1
+
+  # UI basics
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
