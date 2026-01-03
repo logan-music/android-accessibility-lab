@@ -8,8 +8,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.embedding.engine.dart.DartEntrypoint
-import io.flutter.embedding.engine.loader.FlutterInjector
+import io.flutter.embedding.engine.loader.FlutterLoader
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -52,8 +51,8 @@ class AgentService : Service() {
     private fun initFlutterEngineAndStartDart() {
         if (flutterEngine != null) return
 
-        // Use FlutterInjector -> flutterLoader (works across embedding versions)
-        val flutterLoader = FlutterInjector.instance().flutterLoader
+        // Use FlutterLoader -> getInstance() to initialize Flutter assets and find app bundle
+        val flutterLoader = FlutterLoader.getInstance()
         flutterLoader.startInitialization(applicationContext)
         flutterLoader.ensureInitializationComplete(applicationContext, null)
 
@@ -100,7 +99,7 @@ class AgentService : Service() {
 
         // execute Dart entrypoint "backgroundMain" in app bundle
         val appBundlePath = flutterLoader.findAppBundlePath()
-        val entrypoint = DartEntrypoint(appBundlePath, "backgroundMain")
+        val entrypoint = DartExecutor.DartEntrypoint(appBundlePath, "backgroundMain")
         engine.dartExecutor.executeDartEntrypoint(entrypoint)
 
         flutterEngine = engine
