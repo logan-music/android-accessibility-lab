@@ -8,8 +8,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.embedding.engine.loader.FlutterLoader
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.view.FlutterMain
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -24,99 +24,108 @@ class AgentService : Service() {
     }
 
     private val TAG = "AgentService"
+
     private var scheduler: ScheduledExecutorService? = null
     private var flutterEngine: FlutterEngine? = null
     private val bgExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        startForeground(NOTIF_ID, buildNotification("Agent starting"))
 
-        scheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
+        createNotificationChannel()
+        startForeground(NOTIF_ID, buildNotification("Media Agent running"))
+
+        scheduler = Executors.newSingleThreadScheduledExecutor()
         scheduler?.scheduleAtFixedRate({
-            Log.d(TAG, "keepalive tick")
+            Log.d(TAG, "heartbeat tick")
         }, 30, 30, TimeUnit.SECONDS)
 
-        // initialize headless FlutterEngine asynchronously off main thread
         bgExecutor.execute {
             try {
-                initFlutterEngineAndStartDart()
+                initFlutterEngine()
             } catch (e: Exception) {
-                Log.w(TAG, "Error init FlutterEngine: ${e.message}")
+                Log.e(TAG, "FlutterEngine init error: ${e.message}", e)
             }
         }
     }
 
-    private fun initFlutterEngineAndStartDart() {
+    private fun initFlutterEngine() {
         if (flutterEngine != null) return
 
-        // Use FlutterLoader -> getInstance() to initialize Flutter assets and find app bundle
-        val flutterLoader = FlutterLoader.getInstance()
-        flutterLoader.startInitialization(applicationContext)
-        flutterLoader.ensureInitializationComplete(applicationContext, null)
+        // 🔥 Flutter compatible initialization (OLD + NEW)
+        FlutterMain.startInitialization(applicationContext)
+        FlutterMain.ensureInitializationComplete(applicationContext, null)
 
         val engine = FlutterEngine(applicationContext)
 
-        // register MethodChannel on this engine so Dart can call native dispatch
-        MethodChannel(engine.dartExecutor.binaryMessenger, "cyber_accessibility_agent/commands")
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "dispatch" -> {
-                        val args = call.arguments as? Map<*, *>
-                        if (args == null) {
-                            result.error("INVALID_ARGS", "expected a map", null)
-                            return@setMethodCallHandler
-                        }
+        MethodChannel(
+            engine.dartExecutor.binaryMessenger,
+            "cyber_accessibility_agent/commands"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
 
-                        // run native work on bgExecutor to avoid blocking dart isolate thread
-                        bgExecutor.execute {
-                            try {
-                                val action = (args["action"] ?: "").toString()
-                                val id = (args["id"] ?: "").toString()
-                                val payload = (args["payload"] as? Map<*, *>) ?: emptyMap<Any, Any>()
+                "dispatch" -> {
+                    val args = call.arguments as? Map<*, *>
+                    if (args == null) {
+                        result.error("INVALID_ARGS", "Expected Map", null)
+                        return@setMethodCallHandler
+                    }
 
-                                val res = CommandDispatcher.dispatch(
-                                    context = this,
-                                    id = id,
-                                    action = action,
-                                    payload = payload
+                    bgExecutor.execute {
+                        try {
+                            val id = args["id"]?.toString() ?: ""
+                            val action = args["action"]?.toString() ?: ""
+                            val payload =
+                                args["payload"] as? Map<*, *> ?: emptyMap<Any, Any>()
+
+                            val response = CommandDispatcher.dispatch(
+                                context = this@AgentService,
+                                id = id,
+                                action = action,
+                                payload = payload
+                            )
+
+                            result.success(response)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Dispatch error: ${e.message}", e)
+                            result.success(
+                                mapOf(
+                                    "success" to false,
+                                    "error" to (e.message ?: "dispatch_error")
                                 )
-
-                                result.success(res)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "dispatch exception: ${e.message}")
-                                result.success(mapOf("success" to false, "error" to (e.message ?: "exception")))
-                            }
+                            )
                         }
                     }
-                    "ping" -> {
-                        result.success(mapOf("status" to "ok", "device" to android.os.Build.MODEL))
-                    }
-                    else -> result.notImplemented()
                 }
-            }
 
-        // execute Dart entrypoint "backgroundMain" in app bundle
-        val appBundlePath = flutterLoader.findAppBundlePath()
-        val entrypoint = DartExecutor.DartEntrypoint(appBundlePath, "backgroundMain")
-        engine.dartExecutor.executeDartEntrypoint(entrypoint)
+                "ping" -> {
+                    result.success(
+                        mapOf(
+                            "status" to "ok",
+                            "model" to android.os.Build.MODEL
+                        )
+                    )
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        val bundlePath = FlutterMain.findAppBundlePath()
+        engine.dartExecutor.executeDartEntrypoint(
+            DartExecutor.DartEntrypoint(bundlePath, "backgroundMain")
+        )
 
         flutterEngine = engine
-        Log.i(TAG, "FlutterEngine created and backgroundMain started")
+        Log.i(TAG, "Headless FlutterEngine started (backgroundMain)")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        when (action) {
-            ACTION_START -> {
-                Log.i(TAG, "AgentService ACTION_START")
-            }
+        when (intent?.action) {
+            ACTION_START -> Log.i(TAG, "AgentService START")
             ACTION_STOP -> {
-                Log.i(TAG, "AgentService ACTION_STOP -> stopping")
+                Log.i(TAG, "AgentService STOP")
                 stopSelf()
-            }
-            else -> {
             }
         }
         return START_STICKY
@@ -128,8 +137,9 @@ class AgentService : Service() {
             scheduler?.shutdownNow()
             bgExecutor.shutdownNow()
             flutterEngine?.destroy()
+            flutterEngine = null
         } catch (e: Exception) {
-            Log.w(TAG, "onDestroy cleanup error: ${e.message}")
+            Log.w(TAG, "Cleanup error: ${e.message}")
         }
     }
 
@@ -138,7 +148,11 @@ class AgentService : Service() {
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
-            val channel = NotificationChannel(CHANNEL_ID, "Agent Service", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Media Agent",
+                NotificationManager.IMPORTANCE_LOW
+            )
             channel.description = "Media Agent background service"
             nm.createNotificationChannel(channel)
         }
@@ -149,7 +163,9 @@ class AgentService : Service() {
             this,
             0,
             Intent(this, MainActivity::class.java),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                PendingIntent.FLAG_IMMUTABLE
+            else 0
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
