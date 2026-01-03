@@ -1,41 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.cyber_accessibility_agent">
-
+    
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
-
-    <!-- Broad file access (special - granted via Settings) -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
-
-    <!-- Legacy external storage (for older Android) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
-
-    <!-- Android 13+ granular media permissions -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
 
     <application
-        android:name="${applicationName}"
+        android:name="${applicationName}"  <!-- leave default unless you have custom Application class -->
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="System Service"
+        android:label="Media Agent"
         android:supportsRtl="true"
         android:theme="@style/Theme.CyberAccessibilityAgent">
 
+        <!-- Flutter embedding metadata -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"/>
 
+        <!-- BootReceiver for auto-start after boot / package replace -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -44,8 +41,19 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
                 <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
+
+        <!-- AgentService foreground service -->
+        <service
+            android:name=".AgentService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|connectedDevice" />
+            <!-- 
+                foregroundServiceType: mediaPlayback + connectedDevice suits background media/file agent
+                exported=false: service not callable from other apps
+            -->
 
     </application>
 </manifest>
