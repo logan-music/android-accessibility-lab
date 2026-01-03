@@ -20,16 +20,12 @@ class MainActivity : FlutterActivity() {
 
     private val TAG = "MainActivity"
 
-    // Command dispatch channel (calls native CommandDispatcher.dispatch)
+    // Channels
     private val COMMAND_CHANNEL = "cyber_accessibility_agent/commands"
-
-    // Permissions channel for storage permission flows
     private val PERM_CHANNEL = "cyber_agent/permissions"
     private val PERM_REQUEST_CODE = 14523
 
-    // Hold pending MethodChannel.Result for runtime permission callback
     private var pendingPermResult: MethodChannel.Result? = null
-
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -58,7 +54,6 @@ class MainActivity : FlutterActivity() {
                                     action = action,
                                     payload = payload
                                 )
-
                                 result.success(res)
                             } catch (e: Exception) {
                                 Log.w(TAG, "dispatch exception: ${e.message}")
@@ -66,9 +61,7 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
-                    "ping" -> {
-                        result.success(mapOf("status" to "ok", "device" to android.os.Build.MODEL))
-                    }
+                    "ping" -> result.success(mapOf("status" to "ok", "device" to Build.MODEL))
                     else -> result.notImplemented()
                 }
             }
@@ -77,22 +70,54 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PERM_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "checkStoragePermissions" -> {
-                        result.success(currentMediaPermissionMap())
-                    }
-                    "hasAllFilesAccess" -> {
-                        result.success(hasAllFilesAccess())
-                    }
-                    "requestManageAllFilesAccess" -> {
-                        val opened = requestManageAllFilesAccess()
-                        result.success(opened)
-                    }
-                    "requestReadMediaPermissions" -> {
-                        requestReadMediaPermissions(result)
-                    }
+                    "checkStoragePermissions" -> result.success(currentMediaPermissionMap())
+                    "hasAllFilesAccess" -> result.success(hasAllFilesAccess())
+                    "requestManageAllFilesAccess" -> result.success(requestManageAllFilesAccess())
+                    "requestReadMediaPermissions" -> requestReadMediaPermissions(result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Check permissions & start AgentService automatically
+        checkAndStartAgent()
+    }
+
+    private fun checkAndStartAgent() {
+        val allFilesAccess = hasAllFilesAccess()
+        val mediaPerms = currentMediaPermissionMap()
+
+        val needsRequest = !allFilesAccess ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        (!mediaPerms["readMediaImages"] as Boolean ||
+                        !mediaPerms["readMediaVideo"] as Boolean ||
+                        !mediaPerms["readMediaAudio"] as Boolean))
+
+        if (needsRequest) {
+            // Ask for permissions first
+            requestManageAllFilesAccess()
+        } else {
+            // Permissions already granted → start AgentService
+            startAgentService()
+        }
+    }
+
+    private fun startAgentService() {
+        try {
+            val intent = Intent(this, AgentService::class.java)
+            intent.action = AgentService.ACTION_START
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(this, intent)
+            } else {
+                startService(intent)
+            }
+            Log.i(TAG, "AgentService started")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to start AgentService: ${e.message}")
+        }
     }
 
     // ---------- Permissions helpers ----------
@@ -101,9 +126,8 @@ class MainActivity : FlutterActivity() {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
-            // pre-Android 11 rely on READ/WRITE_EXTERNAL_STORAGE at runtime
-            (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) ||
-                (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -113,27 +137,24 @@ class MainActivity : FlutterActivity() {
         map["hasAllFilesAccess"] = hasAllFilesAccess()
 
         if (sdk >= Build.VERSION_CODES.TIRAMISU) {
-            map["readMediaImages"] = (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED)
-            map["readMediaVideo"] = (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED)
-            map["readMediaAudio"] = (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            map["readMediaImages"] = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+            map["readMediaVideo"] = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+            map["readMediaAudio"] = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
         } else {
-            map["readExternalStorage"] = (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)
-            map["writeExternalStorage"] = (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)
+            map["readExternalStorage"] = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            map["writeExternalStorage"] = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
-
         return map
     }
 
     private fun requestManageAllFilesAccess(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return try {
-                // Open app-specific All Files Access settings
                 val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
                 intent.data = Uri.parse("package:$packageName")
                 startActivity(intent)
                 true
             } catch (e: Exception) {
-                // fallback: open general all-files access page
                 try {
                     val intent2 = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
                     startActivity(intent2)
@@ -156,8 +177,6 @@ class MainActivity : FlutterActivity() {
             permsToRequest.add(Manifest.permission.READ_MEDIA_AUDIO)
         } else {
             permsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            // optionally request WRITE_EXTERNAL_STORAGE if needed for writes
-            // permsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
 
         val filtered = permsToRequest.filter {
@@ -166,6 +185,7 @@ class MainActivity : FlutterActivity() {
 
         if (filtered.isEmpty()) {
             result.success(currentMediaPermissionMap())
+            startAgentService()
             return
         }
 
@@ -173,7 +193,7 @@ class MainActivity : FlutterActivity() {
         ActivityCompat.requestPermissions(this, filtered, PERM_REQUEST_CODE)
     }
 
-    // ---------- Permission result handling ----------
+    // ---------- Permission result ----------
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -187,6 +207,11 @@ class MainActivity : FlutterActivity() {
             map["aggregate"] = currentMediaPermissionMap()
             pendingPermResult?.success(map)
             pendingPermResult = null
+
+            // If all required permissions granted → start AgentService
+            if (map.values.all { it == true || it is Map<*, *> }) {
+                startAgentService()
+            }
         }
     }
 
