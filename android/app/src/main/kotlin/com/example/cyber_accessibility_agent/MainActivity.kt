@@ -22,6 +22,7 @@ class MainActivity : FlutterActivity() {
 
     private val COMMAND_CHANNEL = "cyber_accessibility_agent/commands"
     private val PERM_CHANNEL = "cyber_agent/permissions"
+    private val APP_HIDER_CHANNEL = "cyber_accessibility_agent/app_hider"
     private val PERM_REQUEST_CODE = 14523
 
     private var pendingPermResult: MethodChannel.Result? = null
@@ -42,6 +43,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // ----- existing command channel -----
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COMMAND_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -75,6 +77,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // ----- existing permission channel -----
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PERM_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -84,6 +87,25 @@ class MainActivity : FlutterActivity() {
                     "requestPermissions" ->
                         requestPermissions(result)
 
+                    else -> result.notImplemented()
+                }
+            }
+
+        // ----- NEW: AppHider channel -----
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_HIDER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hide" -> {
+                        val ok = AppHider.hide(this)
+                        result.success(ok)
+                    }
+                    "show" -> {
+                        val ok = AppHider.show(this)
+                        result.success(ok)
+                    }
+                    "isVisible" -> {
+                        result.success(AppHider.isVisible(this))
+                    }
                     else -> result.notImplemented()
                 }
             }
