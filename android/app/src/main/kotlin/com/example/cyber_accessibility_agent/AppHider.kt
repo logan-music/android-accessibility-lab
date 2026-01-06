@@ -22,7 +22,7 @@ object AppHider {
     /**
      * Hide the launcher icon.
      *
-     * This disables MainActivity alias in the launcher.
+     * This disables MainActivity component in the launcher.
      */
     fun hide(context: Context): Boolean {
         return setLauncherState(
