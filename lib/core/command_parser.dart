@@ -1,3 +1,4 @@
+// lib/core/command_parser.dart
 import 'dart:convert';
 
 class ParseResult {
@@ -10,14 +11,12 @@ class ParseResult {
 }
 
 enum CommandAction {
-  clickText,
-  clickResourceId,
-  openApp,
-  setText,
-  globalAction,
-  scroll,
-  wait,
-  tapCoords,
+  listFiles,
+  uploadFile,
+  zipFiles,
+  deleteFile,
+  deviceInfo,
+  ping,
   raw,
 }
 
@@ -25,73 +24,52 @@ extension CommandActionExt on CommandAction {
   /// canonical action name expected by native layer
   String get name {
     switch (this) {
-      case CommandAction.clickText:
-        return 'click';
-      case CommandAction.clickResourceId:
-        return 'click_id';
-      case CommandAction.openApp:
-        return 'open';
-      case CommandAction.setText:
-        return 'type';
-      case CommandAction.globalAction:
-        return 'global';
-      case CommandAction.scroll:
-        return 'scroll';
-      case CommandAction.wait:
-        return 'wait';
-      case CommandAction.tapCoords:
-        return 'tap';
+      case CommandAction.listFiles:
+        return 'list_files';
+      case CommandAction.uploadFile:
+        return 'upload_file';
+      case CommandAction.zipFiles:
+        return 'zip_files';
+      case CommandAction.deleteFile:
+        return 'delete_file';
+      case CommandAction.deviceInfo:
+        return 'device_info';
+      case CommandAction.ping:
+        return 'ping';
       case CommandAction.raw:
         return 'raw';
     }
   }
 
-  /// accepts a bunch of aliases and maps to internal enum
+  /// accepts aliases and maps to internal enum
   static CommandAction? fromString(String s) {
     final v = s.toLowerCase().trim();
     switch (v) {
-      case 'click':
-      case '/click':
-      case 'click_text':
-      case 'clicktext':
-        return CommandAction.clickText;
-      case 'click_id':
-      case 'clickid':
-      case '/clickid':
-      case 'click_by_id':
-      case 'click_by_resource':
-      case 'clickresourceid':
-        return CommandAction.clickResourceId;
-      case 'open':
-      case 'start':
-      case '/open':
-      case 'select':
-      case '/select':
-      case 'open_app':
-      case 'launch':
-        return CommandAction.openApp;
-      case 'type':
-      case '/type':
-      case 'set_text':
-      case 'settext':
-        return CommandAction.setText;
-      case 'global':
-      case 'global_action':
-      case 'action':
-        return CommandAction.globalAction;
-      case 'scroll':
-      case '/swipe':
-      case 'swipe':
-        return CommandAction.scroll;
-      case 'wait':
-      case 'sleep':
-      case 'delay':
-        return CommandAction.wait;
-      case 'tap':
-      case 'tap_coords':
-      case 'tapcoords':
-      case 'tap_xy':
-        return CommandAction.tapCoords;
+      case 'list':
+      case 'list_files':
+      case 'ls':
+        return CommandAction.listFiles;
+      case 'upload':
+      case 'upload_file':
+      case 'send':
+      case 'send_file':
+        return CommandAction.uploadFile;
+      case 'zip':
+      case 'zip_files':
+      case 'archive':
+        return CommandAction.zipFiles;
+      case 'delete':
+      case 'delete_file':
+      case 'rm':
+      case 'remove':
+        return CommandAction.deleteFile;
+      case 'device_info':
+      case 'info':
+      case 'device':
+        return CommandAction.deviceInfo;
+      case 'ping':
+      case 'ping_device':
+        return CommandAction.ping;
       case 'raw':
       default:
         return CommandAction.raw;
@@ -152,13 +130,13 @@ class SimpleRateLimiter {
 
 class CommandParser {
   // Config knobs
-  static const int _maxTextLength = 256; // for click_text, set_text etc.
-  static const int _maxPayloadKeys = 20;
+  static const int _maxPathLength = 1024;
+  static const int _maxPayloadKeys = 40;
   static const int _maxIdLength = 128;
-  static const double _maxCoord = 10000; // sanity for coords
-  static final SimpleRateLimiter _rateLimiter = SimpleRateLimiter(maxCalls: 8, windowSeconds: 30);
+  static const int _maxZipNameLength = 128;
+  static final SimpleRateLimiter _rateLimiter = SimpleRateLimiter(maxCalls: 12, windowSeconds: 30);
 
-  /// Parse a raw DB row (Map) coming from SupabaseListener._handleCommand
+  /// Parse a raw DB row (Map) coming from DeviceAgent._handleCommand
   /// `raw` is expected to contain keys: id, device_id, action, payload, created_at
   static ParseResult parse(Map<String, dynamic> raw, String expectedDeviceId) {
     try {
@@ -180,7 +158,7 @@ class CommandParser {
         if (legacy != null) {
           final derived = _deriveActionFromCommandText(legacy.toString());
           actionRaw = derived['action'];
-          // if derived payload present, merge later
+          // we'll merge derived payload later
         } else {
           return ParseResult.err('missing action');
         }
@@ -206,7 +184,6 @@ class CommandParser {
               payload = {'value': decoded};
             }
           } catch (_) {
-            // If it's plain string, wrap as { "value": "<string>" } for legacy
             payload = {'value': payloadRaw};
           }
         } else if (payloadRaw is Map) {
@@ -216,11 +193,11 @@ class CommandParser {
         }
       }
 
-      // If action derived from legacy command text includes additional payload, merge
-      if ((raw['command'] ?? raw['cmd']) != null) {
-        final derived = _deriveActionFromCommandText((raw['command'] ?? raw['cmd']).toString());
+      // If legacy command text present, merge its payload without overwriting explicit payload keys
+      final legacyCmdText = (raw['command'] ?? raw['cmd']);
+      if (legacyCmdText != null) {
+        final derived = _deriveActionFromCommandText(legacyCmdText.toString());
         if (derived['payload'] is Map) {
-          // merge but don't overwrite existing keys
           (derived['payload'] as Map).forEach((k, v) {
             payload.putIfAbsent(k, () => v);
           });
@@ -232,22 +209,18 @@ class CommandParser {
 
       // Action-specific validation and sanitization
       switch (actionEnum) {
-        case CommandAction.clickText:
-          return _parseClickText(id, deviceId, payload, createdAtRaw);
-        case CommandAction.clickResourceId:
-          return _parseClickId(id, deviceId, payload, createdAtRaw);
-        case CommandAction.openApp:
-          return _parseOpenApp(id, deviceId, payload, createdAtRaw);
-        case CommandAction.setText:
-          return _parseSetText(id, deviceId, payload, createdAtRaw);
-        case CommandAction.globalAction:
-          return _parseGlobalAction(id, deviceId, payload, createdAtRaw);
-        case CommandAction.scroll:
-          return _parseScroll(id, deviceId, payload, createdAtRaw);
-        case CommandAction.wait:
-          return _parseWait(id, deviceId, payload, createdAtRaw);
-        case CommandAction.tapCoords:
-          return _parseTapCoords(id, deviceId, payload, createdAtRaw);
+        case CommandAction.listFiles:
+          return _parseListFiles(id, deviceId, payload, createdAtRaw);
+        case CommandAction.uploadFile:
+          return _parseUploadFile(id, deviceId, payload, createdAtRaw);
+        case CommandAction.zipFiles:
+          return _parseZipFiles(id, deviceId, payload, createdAtRaw);
+        case CommandAction.deleteFile:
+          return _parseDeleteFile(id, deviceId, payload, createdAtRaw);
+        case CommandAction.deviceInfo:
+          return _parseDeviceInfo(id, deviceId, payload, createdAtRaw);
+        case CommandAction.ping:
+          return _parsePing(id, deviceId, payload, createdAtRaw);
         case CommandAction.raw:
           final createdAt = _parseDate(createdAtRaw);
           final cmd = Command(
@@ -268,138 +241,96 @@ class CommandParser {
   // Individual action parsers
   // -------------------------
 
-  static ParseResult _parseClickText(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final text = _extractString(payload, ['text', 'value', 'query']);
-    if (text == null || text.trim().isEmpty) return ParseResult.err('click requires non-empty text');
-    if (text.length > _maxTextLength) return ParseResult.err('text too long');
-    final sanitized = _sanitizeText(text);
+  static ParseResult _parseListFiles(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
+    final path = _extractString(payload, ['path', 'dir', 'directory']) ?? '/storage/emulated/0/';
+    if (path.length > _maxPathLength) return ParseResult.err('path too long');
+    final recursive = payload['recursive'] == true || payload['recursive'] == 'true';
+    final limitRaw = payload['limit'] ?? payload['max'] ?? 100;
+    final limit = (limitRaw is int) ? limitRaw : (int.tryParse('$limitRaw') ?? 100);
     final createdAt = _parseDate(createdAtRaw);
+
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.clickText,
-      payload: {'text': sanitized},
+      action: CommandAction.listFiles,
+      payload: {'path': path, 'recursive': recursive, 'limit': limit},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
   }
 
-  static ParseResult _parseClickId(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final rid = _extractString(payload, ['resource_id', 'id', 'rid', 'view_id']);
-    if (rid == null || rid.trim().isEmpty) return ParseResult.err('click_id requires resource_id/view_id');
-    if (rid.length > 240) return ParseResult.err('resource_id too long');
+  static ParseResult _parseUploadFile(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
+    final path = _extractString(payload, ['path', 'file', 'filepath', 'src']);
+    final bucket = _extractString(payload, ['bucket', 'storage_bucket']) ?? '';
+    final dest = _extractString(payload, ['dest', 'destination', 'key']) ?? '';
+    if (path == null || path.isEmpty) return ParseResult.err('upload_file requires path');
+    if (path.length > _maxPathLength) return ParseResult.err('path too long');
     final createdAt = _parseDate(createdAtRaw);
+
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.clickResourceId,
-      payload: {'resource_id': rid.trim()},
+      action: CommandAction.uploadFile,
+      payload: {'path': path, if (bucket.isNotEmpty) 'bucket': bucket, if (dest.isNotEmpty) 'dest': dest},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
   }
 
-  static ParseResult _parseOpenApp(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final pkg = _extractString(payload, ['package', 'pkg', 'app']);
-    if (pkg == null || pkg.trim().isEmpty) return ParseResult.err('open_app requires package name');
-    if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(pkg)) return ParseResult.err('invalid package name');
+  static ParseResult _parseZipFiles(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
+    final path = _extractString(payload, ['path', 'dir', 'directory']);
+    final zipName = _extractString(payload, ['zip_name', 'zip', 'archive']) ?? 'archive.zip';
+    if (path == null || path.isEmpty) return ParseResult.err('zip_files requires path');
+    if (path.length > _maxPathLength) return ParseResult.err('path too long');
+    if (zipName.length > _maxZipNameLength) return ParseResult.err('zip_name too long');
     final createdAt = _parseDate(createdAtRaw);
+
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.openApp,
-      payload: {'package': pkg.trim()},
+      action: CommandAction.zipFiles,
+      payload: {'path': path, 'zip_name': zipName},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
   }
 
-  static ParseResult _parseSetText(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final text = _extractString(payload, ['text', 'value']);
-    if (text == null) return ParseResult.err('set_text requires text');
-    if (text.length > _maxTextLength) return ParseResult.err('text too long');
-    final target = _extractString(payload, ['target_text', 'target', 'resource_id', 'view_id']);
+  static ParseResult _parseDeleteFile(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
+    final path = _extractString(payload, ['path', 'file', 'filepath', 'target']);
+    if (path == null || path.isEmpty) return ParseResult.err('delete_file requires path');
+    if (path.length > _maxPathLength) return ParseResult.err('path too long');
+    final permanent = payload['permanent'] == true || payload['permanent'] == 'true';
     final createdAt = _parseDate(createdAtRaw);
+
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.setText,
-      payload: {
-        'text': _sanitizeText(text),
-        if (target != null) 'target': target.trim(),
-      },
+      action: CommandAction.deleteFile,
+      payload: {'path': path, 'permanent': permanent},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
   }
 
-  static ParseResult _parseGlobalAction(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final act = _extractString(payload, ['name', 'action', 'global']);
-    if (act == null) return ParseResult.err('global_action requires name');
-    final nameLower = act.toLowerCase().trim();
-    // whitelist allowed global actions
-    const allowed = {'back', 'home', 'recents', 'notifications', 'quick_settings'};
-    if (!allowed.contains(nameLower)) return ParseResult.err('unsupported global_action');
+  static ParseResult _parseDeviceInfo(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
     final createdAt = _parseDate(createdAtRaw);
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.globalAction,
-      payload: {'name': nameLower},
+      action: CommandAction.deviceInfo,
+      payload: {},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
   }
 
-  static ParseResult _parseScroll(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final dir = _extractString(payload, ['direction', 'dir'])?.toLowerCase();
-    final amtRaw = payload['amount'] ?? payload['amt'] ?? payload['count'];
-    final amount = amtRaw is int ? amtRaw : (int.tryParse('$amtRaw') ?? 1);
-
-    if (dir == null || !(dir == 'up' || dir == 'down' || dir == 'left' || dir == 'right')) {
-      return ParseResult.err('scroll requires direction (up/down/left/right)');
-    }
-    if (amount <= 0 || amount > 50) return ParseResult.err('scroll amount out of range');
+  static ParseResult _parsePing(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
     final createdAt = _parseDate(createdAtRaw);
     final cmd = Command(
       id: id,
       deviceId: deviceId,
-      action: CommandAction.scroll,
-      payload: {'direction': dir, 'amount': amount},
-      createdAt: createdAt,
-    );
-    return ParseResult.ok(cmd);
-  }
-
-  static ParseResult _parseWait(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final msRaw = payload['ms'] ?? payload['millis'] ?? payload['milliseconds'] ?? payload['duration'];
-    final ms = msRaw is int ? msRaw : (int.tryParse('$msRaw') ?? 0);
-    if (ms <= 0 || ms > 120000) return ParseResult.err('wait duration invalid (0 < ms <= 120000)');
-    final createdAt = _parseDate(createdAtRaw);
-    final cmd = Command(
-      id: id,
-      deviceId: deviceId,
-      action: CommandAction.wait,
-      payload: {'ms': ms},
-      createdAt: createdAt,
-    );
-    return ParseResult.ok(cmd);
-  }
-
-  static ParseResult _parseTapCoords(String id, String deviceId, Map<String, dynamic> payload, dynamic createdAtRaw) {
-    final xRaw = payload['x'];
-    final yRaw = payload['y'];
-    final x = xRaw is num ? xRaw.toDouble() : double.tryParse('$xRaw');
-    final y = yRaw is num ? yRaw.toDouble() : double.tryParse('$yRaw');
-
-    if (x == null || y == null) return ParseResult.err('tap_coords requires numeric x and y');
-    if (x.abs() > _maxCoord || y.abs() > _maxCoord) return ParseResult.err('coords out of bounds');
-    final createdAt = _parseDate(createdAtRaw);
-    final cmd = Command(
-      id: id,
-      deviceId: deviceId,
-      action: CommandAction.tapCoords,
-      payload: {'x': x, 'y': y},
+      action: CommandAction.ping,
+      payload: {},
       createdAt: createdAt,
     );
     return ParseResult.ok(cmd);
@@ -421,7 +352,6 @@ class CommandParser {
       }
       if (v is num) return v.toString();
       try {
-        // try to stringify
         final s = v.toString();
         if (s.isNotEmpty) return s;
       } catch (_) {}
@@ -440,13 +370,6 @@ class CommandParser {
     }
   }
 
-  static String _sanitizeText(String s) {
-    final cleaned = s.replaceAll(RegExp(r'[\x00-\x1F\x7F]'), '').trim();
-    return cleaned.replaceAll(RegExp(r'\s+'), ' ');
-  }
-
-  /// Try a simple heuristic to derive action + payload from a legacy command string
-  /// e.g. "/click OK" -> { action: 'click', payload: { text: 'OK' } }
   static Map<String, dynamic> _deriveActionFromCommandText(String cmdText) {
     final raw = cmdText.trim();
     if (raw.isEmpty) return {'action': 'raw', 'payload': {}};
@@ -457,24 +380,33 @@ class CommandParser {
     final args = parts.length > 1 ? parts.sublist(1).join(' ') : '';
 
     switch (first.toLowerCase()) {
-      case 'click':
-        return {'action': 'click', 'payload': {'text': args}};
-      case 'select':
-      case 'open':
-      case 'start':
-        return {'action': 'open', 'payload': {'package': args}};
-      case 'clickid':
-      case 'click_id':
-      case 'clickbyid':
-        return {'action': 'click_id', 'payload': {'resource_id': args}};
-      case 'type':
-        return {'action': 'type', 'payload': {'text': args}};
-      case 'back':
-        return {'action': 'global', 'payload': {'name': 'back'}};
-      case 'home':
-        return {'action': 'global', 'payload': {'name': 'home'}};
-      case 'swipe':
-        return {'action': 'scroll', 'payload': {'direction': args.split(' ').firstWhere((_) => true, orElse: () => 'left')}};
+      case 'list':
+      case 'ls':
+        return {
+          'action': 'list_files',
+          'payload': {'path': args.isNotEmpty ? args : '/storage/emulated/0/'}
+        };
+      case 'upload':
+      case 'send':
+        return {
+          'action': 'upload_file',
+          'payload': {'path': args.isNotEmpty ? args : null}
+        };
+      case 'zip':
+      case 'archive':
+        // usage: /zip <path> [zip_name]
+        final sub = args.split(RegExp(r'\s+'));
+        final p = sub.isNotEmpty ? sub[0] : '';
+        final z = (sub.length > 1) ? sub.sublist(1).join('_') : 'archive.zip';
+        return {'action': 'zip_files', 'payload': {'path': p, 'zip_name': z}};
+      case 'delete':
+      case 'rm':
+        return {'action': 'delete_file', 'payload': {'path': args}};
+      case 'info':
+      case 'device_info':
+        return {'action': 'device_info', 'payload': {}};
+      case 'ping':
+        return {'action': 'ping', 'payload': {}};
       default:
         return {'action': 'raw', 'payload': {'text': raw}};
     }
