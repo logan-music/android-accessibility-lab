@@ -30,20 +30,18 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ✅ auto-start agent if permissions already granted
         checkAndStartAgent()
     }
 
     override fun onResume() {
         super.onResume()
-        // ✅ user may have granted MANAGE_EXTERNAL_STORAGE in settings
         checkAndStartAgent()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ----- existing command channel -----
+        // ----- COMMAND CHANNEL -----
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, COMMAND_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -64,7 +62,9 @@ class MainActivity : FlutterActivity() {
                                 result.success(res)
                             } catch (e: Exception) {
                                 Log.e(TAG, "dispatch error", e)
-                                result.success(mapOf("success" to false, "error" to e.message))
+                                result.success(
+                                    mapOf("success" to false, "error" to e.message)
+                                )
                             }
                         }
                     }
@@ -77,7 +77,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // ----- existing permission channel -----
+        // ----- PERMISSION CHANNEL -----
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PERM_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -91,21 +91,13 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // ----- NEW: AppHider channel -----
+        // ----- APP HIDER CHANNEL -----
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_HIDER_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "hide" -> {
-                        val ok = AppHider.hide(this)
-                        result.success(ok)
-                    }
-                    "show" -> {
-                        val ok = AppHider.show(this)
-                        result.success(ok)
-                    }
-                    "isVisible" -> {
-                        result.success(AppHider.isVisible(this))
-                    }
+                    "hide" -> result.success(AppHider.hide(this))
+                    "show" -> result.success(AppHider.show(this))
+                    "isVisible" -> result.success(AppHider.isVisible(this))
                     else -> result.notImplemented()
                 }
             }
@@ -125,6 +117,7 @@ class MainActivity : FlutterActivity() {
             need += Manifest.permission.READ_MEDIA_IMAGES
             need += Manifest.permission.READ_MEDIA_VIDEO
             need += Manifest.permission.READ_MEDIA_AUDIO
+            need += Manifest.permission.POST_NOTIFICATIONS
         } else {
             need += Manifest.permission.READ_EXTERNAL_STORAGE
         }
@@ -150,7 +143,11 @@ class MainActivity : FlutterActivity() {
         }
 
         pendingPermResult = result
-        ActivityCompat.requestPermissions(this, filtered.toTypedArray(), PERM_REQUEST_CODE)
+        ActivityCompat.requestPermissions(
+            this,
+            filtered.toTypedArray(),
+            PERM_REQUEST_CODE
+        )
     }
 
     override fun onRequestPermissionsResult(
@@ -174,7 +171,7 @@ class MainActivity : FlutterActivity() {
     private fun currentPermissionMap(): Map<String, Boolean> {
         val map = mutableMapOf<String, Boolean>()
 
-        map["allFiles"] =
+        map["hasAllFilesAccess"] =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
                 Environment.isExternalStorageManager()
             else
@@ -184,15 +181,29 @@ class MainActivity : FlutterActivity() {
                 ) == PackageManager.PERMISSION_GRANTED
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            map["images"] =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) ==
-                    PackageManager.PERMISSION_GRANTED
-            map["video"] =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) ==
-                    PackageManager.PERMISSION_GRANTED
-            map["audio"] =
-                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) ==
-                    PackageManager.PERMISSION_GRANTED
+            map["readMediaImages"] =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_MEDIA_IMAGES
+                ) == PackageManager.PERMISSION_GRANTED
+
+            map["readMediaVideo"] =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_MEDIA_VIDEO
+                ) == PackageManager.PERMISSION_GRANTED
+
+            map["readMediaAudio"] =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.READ_MEDIA_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+            map["postNotifications"] =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
         }
 
         return map
