@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.embedding.engine.loader.FlutterLoader
 import java.util.concurrent.Executors
 
 class AgentService : Service() {
@@ -32,18 +33,25 @@ class AgentService : Service() {
     private fun initFlutter() {
         if (flutterEngine != null) return
 
-        val engine = FlutterEngine(applicationContext)
+        try {
+            val loader = FlutterLoader()
+            loader.startInitialization(applicationContext)
+            loader.ensureInitializationComplete(applicationContext, null)
 
-        // ✅ CALL BACKGROUND ENTRYPOINT (NOT main)
-        val entrypoint = DartExecutor.DartEntrypoint(
-            applicationContext.assets,
-            "backgroundMain"
-        )
+            val engine = FlutterEngine(applicationContext)
 
-        engine.dartExecutor.executeDartEntrypoint(entrypoint)
+            val entrypoint = DartExecutor.DartEntrypoint(
+                loader.findAppBundlePath(),
+                "backgroundMain"
+            )
 
-        flutterEngine = engine
-        Log.i(TAG, "Headless FlutterEngine (backgroundMain) started")
+            engine.dartExecutor.executeDartEntrypoint(entrypoint)
+
+            flutterEngine = engine
+            Log.i(TAG, "Headless FlutterEngine started (backgroundMain)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start FlutterEngine", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
