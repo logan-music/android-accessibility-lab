@@ -8,7 +8,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
-import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.Executors
 
 class AgentService : Service() {
@@ -35,19 +34,16 @@ class AgentService : Service() {
 
         val engine = FlutterEngine(applicationContext)
 
-        MethodChannel(
-            engine.dartExecutor.binaryMessenger,
-            "cyber_accessibility_agent/commands"
-        ).setMethodCallHandler { call, result ->
-            result.notImplemented()
-        }
-
-        engine.dartExecutor.executeDartEntrypoint(
-            DartExecutor.DartEntrypoint.createDefault()
+        // ✅ CALL BACKGROUND ENTRYPOINT (NOT main)
+        val entrypoint = DartExecutor.DartEntrypoint(
+            applicationContext.assets,
+            "backgroundMain"
         )
 
+        engine.dartExecutor.executeDartEntrypoint(entrypoint)
+
         flutterEngine = engine
-        Log.i(TAG, "Headless FlutterEngine started")
+        Log.i(TAG, "Headless FlutterEngine (backgroundMain) started")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
