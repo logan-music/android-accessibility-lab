@@ -11,17 +11,14 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # HTTP helper used for device registration & heartbeat
   http: ^0.13.6
-
-  # Local storage for device_id / device_jwt
   shared_preferences: ^2.1.1
-
-  # Use UUID generator for device id
   uuid: ^3.0.6
-
-  # UI basics
   cupertino_icons: ^1.0.6
+
+  # Added for zip handling and small path utilities
+  archive: ^3.3.5
+  path: ^1.8.2
 
 dev_dependencies:
   flutter_test:
