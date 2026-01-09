@@ -1,6 +1,5 @@
 // lib/main.dart
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,12 +10,12 @@ import 'core/device_agent.dart';
 const int HEARTBEAT_INTERVAL_SECONDS = 30;
 const String SUPABASE_PROJECT_URL =
     'https://pbovhvhpewnooofaeybe.supabase.co';
-const String SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBib3ZodmhwZXdub29vZmFleWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNjY0MTIsImV4cCI6MjA4MTc0MjQxMn0.5MotbwR5oS29vZ2w-b2rmyExT1M803ImLD_-ecu2MzU';
+const String SUPABASE_ANON_KEY =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBib3ZodmhwZXdub29vZmFleWJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYxNjY0MTIsImV4cCI6MjA4MTc0MjQxMn0.5MotbwR5oS29vZ2w-b2rmyExT1M803ImLD_-ecu2MzU';
 const String SUPABASE_REGISTER_FUNCTION =
     '$SUPABASE_PROJECT_URL/functions/v1/register-device';
 
 final Uuid _uuid = const Uuid();
-
 const MethodChannel _appHider =
     MethodChannel('cyber_accessibility_agent/app_hider');
 
@@ -41,7 +40,7 @@ Future<void> _startBackgroundAgent() async {
     );
 
     await DeviceAgent.instance.start();
-    DeviceAgent.instance.sendHeartbeat();
+    unawaited(DeviceAgent.instance.sendHeartbeat());
     debugPrint('[BG] DeviceAgent started');
   } catch (e, st) {
     debugPrint('[BG] Failed to start agent: $e\n$st');
@@ -84,8 +83,14 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _heartbeatTimer?.cancel();
-    // ⚠️ USIZIME AGENT HAPA
     super.dispose();
+  }
+
+  /// Safe status update
+  void _updateStatus(String newStatus) {
+    if (mounted && _status != newStatus) {
+      setState(() => _status = newStatus);
+    }
   }
 
   Future<void> _checkIcon() async {
@@ -98,7 +103,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _initAndStart() async {
-    setState(() => _status = 'Loading local state...');
+    _updateStatus('Loading local state...');
     final prefs = await SharedPreferences.getInstance();
     _deviceId = prefs.getString('device_id');
     _deviceJwt = prefs.getString('device_jwt');
@@ -108,7 +113,7 @@ class _HomePageState extends State<HomePage> {
       await prefs.setString('device_id', _deviceId!);
     }
 
-    setState(() => _status = 'Configuring agent...');
+    _updateStatus('Configuring agent...');
     await DeviceAgent.instance.configure(
       supabaseUrl: SUPABASE_PROJECT_URL,
       anonKey: SUPABASE_ANON_KEY,
@@ -118,30 +123,58 @@ class _HomePageState extends State<HomePage> {
       registerUri: Uri.tryParse(SUPABASE_REGISTER_FUNCTION),
     );
 
-    setState(() => _status = 'Starting agent...');
+    _updateStatus('Starting agent...');
     await DeviceAgent.instance.start();
+
+    // Auto-register if JWT missing
+    if (DeviceAgent.instance.deviceJwt == null) {
+      _updateStatus('⏳ Waiting for registration...');
+      try {
+        final reg = await DeviceAgent.instance.registerDeviceViaEdge(
+          registerUri: DeviceAgent.instance.registerUri ??
+              Uri.parse(SUPABASE_REGISTER_FUNCTION),
+          requestedId: _deviceId!,
+          displayName: 'Android Media Agent',
+          consent: true,
+          metadata: {'source': 'ui_auto_register'},
+        );
+
+        if (reg != null) {
+          _updateStatus('✅ Device registered Successful');
+        } else {
+          _updateStatus('Registration not completed (see logs)');
+        }
+      } catch (e) {
+        _updateStatus('Auto-register error: $e');
+      }
+    } else {
+      _updateStatus('✅ Device registered Successful');
+    }
 
     _startHeartbeat();
 
+    // Refresh local credentials
     final prefs2 = await SharedPreferences.getInstance();
-    setState(() {
-      _deviceId = prefs2.getString('device_id');
-      _deviceJwt = prefs2.getString('device_jwt');
-      _status = 'Agent running';
-    });
+    _deviceId = prefs2.getString('device_id') ?? _deviceId;
+    _deviceJwt = prefs2.getString('device_jwt') ?? _deviceJwt;
+
+    _updateStatus((_deviceJwt != null)
+        ? 'Agent running & registered'
+        : 'Agent running (not registered)');
   }
 
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
-    DeviceAgent.instance.sendHeartbeat();
+    unawaited(DeviceAgent.instance.sendHeartbeat());
+
     _heartbeatTimer = Timer.periodic(
       const Duration(seconds: HEARTBEAT_INTERVAL_SECONDS),
-      (_) => DeviceAgent.instance.sendHeartbeat(),
+      (_) => unawaited(DeviceAgent.instance.sendHeartbeat()),
     );
   }
 
   Future<void> _manualRegister() async {
-    setState(() => _status = 'Registering device...');
+    _updateStatus('Registering device...');
     try {
       final res = await DeviceAgent.instance.registerDeviceViaEdge(
         registerUri: Uri.parse(SUPABASE_REGISTER_FUNCTION),
@@ -153,16 +186,16 @@ class _HomePageState extends State<HomePage> {
 
       if (res != null) {
         final prefs = await SharedPreferences.getInstance();
-        setState(() {
-          _deviceId = prefs.getString('device_id');
-          _deviceJwt = prefs.getString('device_jwt');
-          _status = 'Registration successful';
-        });
+        _deviceId = prefs.getString('device_id');
+        _deviceJwt = prefs.getString('device_jwt');
+        _updateStatus('✅ Device registered Successful');
+
+        unawaited(DeviceAgent.instance.sendHeartbeat());
       } else {
-        setState(() => _status = 'Registration failed');
+        _updateStatus('Registration failed');
       }
     } catch (e) {
-      setState(() => _status = 'Register error: $e');
+      _updateStatus('Register error: $e');
     }
   }
 
@@ -179,8 +212,7 @@ class _HomePageState extends State<HomePage> {
   Widget _infoRow(String label, String? value) {
     return Row(
       children: [
-        Text('$label: ',
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+        Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
         Expanded(child: Text(value ?? '-')),
       ],
     );
@@ -210,8 +242,8 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 12),
                 ElevatedButton(
                   onPressed: _iconVisible ? _hideIcon : _showIcon,
-                  child: Text(
-                      _iconVisible ? 'Hide app icon' : 'Restore app icon'),
+                  child:
+                      Text(_iconVisible ? 'Hide app icon' : 'Restore app icon'),
                 ),
               ],
             ),
