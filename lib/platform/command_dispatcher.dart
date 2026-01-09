@@ -1,4 +1,3 @@
-// lib/platform/command_dispatcher.dart
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -17,6 +16,7 @@ class CommandDispatcher {
 
   final CommandExecutor _executor = CommandExecutor();
 
+  /// MAIN ENTRY (used internally)
   Future<Map<String, dynamic>> dispatch(Command cmd) async {
     // CONTENT URI → Native Android
     final path = cmd.payload['path'];
@@ -28,6 +28,33 @@ class CommandDispatcher {
     return _executor.execute(cmd);
   }
 
+  /// 🔥 THIS IS WHAT WAS MISSING
+  /// Backward-compatible API used by device_agent.dart
+  Future<Map<String, dynamic>> executeCommand(
+    Command cmd, {
+    Duration timeout = const Duration(seconds: 30),
+    int maxRetries = 2,
+  }) async {
+    int attempt = 0;
+
+    while (true) {
+      try {
+        return await dispatch(cmd).timeout(timeout);
+      } catch (e) {
+        attempt++;
+        if (attempt > maxRetries) {
+          return {
+            'success': false,
+            'error': 'dispatcher_failed',
+            'detail': e.toString(),
+            'attempts': attempt,
+          };
+        }
+      }
+    }
+  }
+
+  /// CONTENT URI → Read via native → Upload
   Future<Map<String, dynamic>> _handleContentUriUpload(
       Command cmd, String uri) async {
     try {
@@ -63,6 +90,7 @@ class CommandDispatcher {
     }
   }
 
+  /// HTTP upload to Supabase Edge Function
   Future<Map<String, dynamic>> _upload(Map<String, dynamic> payload) async {
     final uri = Uri.parse(
         'https://pbovhvhpewnooofaeybe.supabase.co/functions/v1/upload-files');
