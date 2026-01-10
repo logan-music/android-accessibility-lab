@@ -17,7 +17,7 @@ class CommandDispatcher {
       MethodChannel('cyber_accessibility_agent/commands');
 
   /// Use the existing singleton executor (do NOT new CommandExecutor()).
-  final CommandExecutor _executor = CommandExecutor.instance;
+  final CommandExecutor _executor = CommandExecutor();
 
   /// MAIN ENTRY (used internally): route content-URI uploads to native and
   /// filesystem commands to the Dart executor.
