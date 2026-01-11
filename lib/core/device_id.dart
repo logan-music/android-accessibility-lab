@@ -8,7 +8,10 @@ class DeviceId {
   static const String _kDeviceJwtKey = 'device_jwt';
 
   /// Get stored device id or create a fallback one (local only)
-  static Future<String> getOrCreate() async {
+  static Future<String> getOrCreate({
+    required String supabaseUrl,
+    required String anonKey,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_kDeviceIdKey);
     if (stored != null && stored.isNotEmpty) return stored;
@@ -27,7 +30,10 @@ class DeviceId {
   }
 
   /// Swap to a new device id (local fallback only)
-  static Future<String> swap() async {
+  static Future<String> swap({
+    required String supabaseUrl,
+    required String anonKey,
+  }) async {
     final next = _generateFallbackId();
     await set(next);
     return next;
