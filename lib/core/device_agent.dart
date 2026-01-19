@@ -1,3 +1,4 @@
+// lib/core/device_agent.dart
 import 'dart:async';
 import 'dart:convert';
 
@@ -21,10 +22,7 @@ class DeviceAgent {
 
   static const Duration pollInterval = Duration(seconds: 5);
 
-  // Edge secret the edge functions expect (you set this in function secrets)
-  static const String deviceApiKey = 'Mysecret123';
-
-  // Public anon key from Supabase (you provided this)
+  // Public anon key (Supabase) - used for Authorization: Bearer + apikey header
   static const String SUPABASE_ANON_KEY =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt5d3BuaGFlcm13bGR6Y3d0c252Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg2MjQ5NDAsImV4cCI6MjA4NDIwMDk0MH0.U47u5W9Z7imMXXvzQ66xCx7_3CXjgqJrLrU-dgDZb68';
 
@@ -36,6 +34,7 @@ class DeviceAgent {
     this.deviceId = deviceId;
   }
 
+  /// Register device via Edge function /register-device
   Future<void> register() async {
     await _post('/register-device', {
       'device_id': deviceId,
@@ -47,7 +46,6 @@ class DeviceAgent {
   Future<void> start() async {
     if (_running) return;
     _running = true;
-
     await _pollOnce();
     _pollTimer = Timer.periodic(pollInterval, (_) => _pollOnce());
   }
@@ -63,14 +61,15 @@ class DeviceAgent {
     _busy = true;
     try {
       final res = await _get('/get-commands', query: {'limit': '5'});
-      final List<dynamic> cmds =
-          (res['commands'] ?? res['data'] ?? []) as List<dynamic>;
-
+      final List<dynamic> cmds = (res['commands'] ?? res['data'] ?? []) as List<dynamic>;
       for (final c in cmds) {
         if (c is Map) {
           await _handleCommand(Map<String, dynamic>.from(c));
         }
       }
+    } catch (e) {
+      // silent - avoid noisy UI; logs can be enabled during debug
+      // print('[DeviceAgent] poll error: $e');
     } finally {
       _busy = false;
     }
@@ -100,8 +99,7 @@ class DeviceAgent {
     );
   }
 
-  Future<void> _updateCommandStatus(
-      String id, String status, Map<String, dynamic> result) async {
+  Future<void> _updateCommandStatus(String id, String status, Map<String, dynamic> result) async {
     await _post('/update-command', {
       'id': id,
       'status': status,
@@ -116,6 +114,7 @@ class DeviceAgent {
     });
   }
 
+  /// Upload file bytes to upload-file edge function (multipart/form-data)
   Future<Map<String, dynamic>> uploadFile({
     required String path,
     required List<int> bytes,
@@ -127,9 +126,8 @@ class DeviceAgent {
 
     final req = http.MultipartRequest('POST', uri)
       ..headers.addAll({
-        // IMPORTANT: use apikey (anon) and device secret; DO NOT send Authorization: Bearer
+        'Authorization': 'Bearer $SUPABASE_ANON_KEY',
         'apikey': SUPABASE_ANON_KEY,
-        'x-device-api-key': deviceApiKey,
         'X-Device-ID': deviceId,
       })
       ..fields['device_id'] = deviceId
@@ -147,11 +145,13 @@ class DeviceAgent {
     final resp = await http.Response.fromStream(streamed);
 
     if (resp.statusCode >= 200 && resp.statusCode < 300) {
-      return resp.body.isNotEmpty ? jsonDecode(resp.body) : {'success': true};
+      return resp.body.isNotEmpty ? jsonDecode(resp.body) as Map<String, dynamic> : {'success': true};
     }
 
     throw Exception('upload failed ${resp.statusCode}: ${resp.body}');
   }
+
+  // ---------------- HTTP helpers ----------------
 
   Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body) async {
     final uri = Uri.parse('$supabaseUrl/functions/v1$path');
@@ -161,9 +161,8 @@ class DeviceAgent {
           uri,
           headers: {
             'Content-Type': 'application/json',
-            // only apikey (anon) + device secret + device id
+            'Authorization': 'Bearer $SUPABASE_ANON_KEY',
             'apikey': SUPABASE_ANON_KEY,
-            'x-device-api-key': deviceApiKey,
             'X-Device-ID': deviceId,
           },
           body: jsonEncode(body),
@@ -174,7 +173,12 @@ class DeviceAgent {
       throw Exception('Edge error ${res.statusCode}: ${res.body}');
     }
 
-    return res.body.isNotEmpty ? jsonDecode(res.body) : {};
+    if (res.body.isEmpty) return {};
+    try {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return {'_raw': res.body};
+    }
   }
 
   Future<Map<String, dynamic>> _get(String path, {Map<String, String>? query}) async {
@@ -185,8 +189,8 @@ class DeviceAgent {
 
     final res = await _http.get(uri, headers: {
       'Accept': 'application/json',
+      'Authorization': 'Bearer $SUPABASE_ANON_KEY',
       'apikey': SUPABASE_ANON_KEY,
-      'x-device-api-key': deviceApiKey,
       'X-Device-ID': deviceId,
     }).timeout(const Duration(seconds: 10));
 
@@ -194,7 +198,12 @@ class DeviceAgent {
       throw Exception('Edge GET error ${res.statusCode}: ${res.body}');
     }
 
-    return res.body.isNotEmpty ? jsonDecode(res.body) : {};
+    if (res.body.isEmpty) return {};
+    try {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return {'_raw': res.body};
+    }
   }
 
   MediaType _parseMediaType(String s) {
