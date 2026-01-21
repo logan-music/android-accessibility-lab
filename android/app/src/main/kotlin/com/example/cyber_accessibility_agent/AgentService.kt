@@ -18,7 +18,6 @@ class AgentService : Service() {
     companion object {
         const val CHANNEL_ID = "sys_core"
         const val NOTIF_ID = 1001
-        const val ACTION_START = "agent_start"
     }
 
     private val TAG = "AgentService"
@@ -29,7 +28,7 @@ class AgentService : Service() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
-        Log.i(TAG, "System foreground service started")
+        Log.i(TAG, "Foreground AgentService started")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -54,18 +53,14 @@ class AgentService : Service() {
 
             engine.dartExecutor.executeDartEntrypoint(entrypoint)
 
-            // Channel still exists but DOES NOT change notification text
-            MethodChannel(
-                engine.dartExecutor.binaryMessenger,
-                "agent/status"
-            ).setMethodCallHandler { call, result ->
-                if (call.method == "updateStatus") {
-                    // intentionally ignored to keep notification static & boring
-                    result.success(true)
-                } else {
-                    result.notImplemented()
+            MethodChannel(engine.dartExecutor.binaryMessenger, "agent/status")
+                .setMethodCallHandler { call, result ->
+                    if (call.method == "updateStatus") {
+                        result.success(true) // intentionally ignored
+                    } else {
+                        result.notImplemented()
+                    }
                 }
-            }
 
             flutterEngine = engine
             Log.i(TAG, "Headless FlutterEngine started")
@@ -83,33 +78,32 @@ class AgentService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // ================= NOTIFICATION (SYSTEM-LIKE) =================
+    // ---------------- Minimal Notification ----------------
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "",
+                "System Service", // any short description
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
-                description = ""
                 setSound(null, null)
                 enableVibration(false)
                 enableLights(false)
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
-
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(): Notification {
+        val iconRes = R.drawable.ic_sys_dot // must exist
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_sys_dot)
-            .setContentTitle("")
-            .setContentText("")
+            .setSmallIcon(iconRes)
+            .setContentTitle("") // empty
+            .setContentText("")  // empty
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(true)
