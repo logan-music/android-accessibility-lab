@@ -176,20 +176,15 @@ class _SilentSetupPageState extends State<SilentSetupPage> {
         deviceId: deviceId,
       );
 
-      final registeredId = await DeviceAgent.instance.register();
-
-      if (registeredId != null &&
-          registeredId.isNotEmpty &&
-          registeredId != deviceId) {
-        await DeviceId.set(registeredId);
-      }
+      // IMPORTANT: register() RETURNS void
+      await DeviceAgent.instance.register();
 
       _heartbeatTimer?.cancel();
       _heartbeatTimer = Timer.periodic(
         const Duration(seconds: HEARTBEAT_INTERVAL_SECONDS),
         (_) => DeviceAgent.instance.heartbeat(),
       );
-    } catch (_) {
+    } catch (e) {
       _agentStarted = false;
     }
   }
