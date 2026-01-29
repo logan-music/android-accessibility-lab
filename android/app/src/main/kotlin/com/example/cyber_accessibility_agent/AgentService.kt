@@ -209,7 +209,7 @@ class AgentService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Software Update")
             .setContentText("Software updates are available.")
-            .setSmallIcon(android.R.drawable.transparent_1px)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setShowWhen(false)
