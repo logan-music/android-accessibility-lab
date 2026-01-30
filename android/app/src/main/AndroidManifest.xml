@@ -20,7 +20,7 @@
     <application
         android:name="${applicationName}"
         android:label="System Service"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_launcher_fake"
         android:allowBackup="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.CyberAccessibilityAgent">
